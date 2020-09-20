@@ -1,3 +1,55 @@
 <!DOCTYPE html>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script>
+function loadScheduledData() {
+  $.get("/newestRun").done(function(data) {
+    if (data === null) {
+      $("#nextRun").html("No run");
+      $("#scheduleRun").removeClass("hidden");
+      return;
+    }
+
+    $("#nextRun").html(data.date);
+  }).fail(function () {
+    $("#nextRun").html("Couldn't load!");
+  });
+}
+
+function setUp() {
+  loadScheduledData();
+
+  // Event listeners.
+  $("#scheduleRun").click(function() {
+    $("#scheduleRun").attr("disabled", true);
+    $.get({
+      url: "/scheduleRun",
+    }).done(function() {
+      $("#scheduleNextTask").parent().attr("pass", true);
+      loadScheduledData();
+    }).fail(function() {
+      $("#scheduleNextTask").parent().attr("fail", true);
+    });
+  });
+}
+window.addEventListener("load", setUp);
+</script>
+<style>
+#scheduleRun {
+  margin-left: 10px;
+}
+
+.hidden {
+  visibility: hidden;
+}
+
+p[pass]:after {
+  content: "✔️"
+}
+
+p[fail]:after {
+  content: "❌"
+}
+</style>
 <p>🚧🚧 Under construction 🚧🚧</p>
+<p>Next scheduled run: <span id="nextRun"></span><button id="scheduleRun" type="button" class="hidden">Schedule it!</button></p>
 <p>Server is <span style="color:green">working</span>.</p>

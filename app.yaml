@@ -1,1 +1,5 @@
 runtime: go112
+
+env_variables:
+  PROJECT_ID: "hhhbot"
+
