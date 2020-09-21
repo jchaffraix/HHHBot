@@ -17,6 +17,35 @@ import (
 // Request handling.
 // *****************
 
+// A lightweight Date.
+// Unfortunately the time module doesn't define this
+// but returns the triple instead.
+type Date struct {
+  Year int
+  Month int
+  Day int
+}
+
+func (d Date) After(other Date) bool {
+  return d.Year > other.Year || d.Month > other.Month || d.Day > other.Day
+}
+
+func (d Date) toString() string {
+  // We use 0 padded RFC3339 representation of the date as our primary
+  // key. This works as the lexicographic order follows the calendar's.
+  // We pad the year with a zero to be safe. Also it matches the format
+  // from Long Now Foundation, which is cool!
+  return fmt.Sprintf("%05d-%02d-%02d", d.Year, d.Month, d.Day)
+}
+
+func convertToDate(date time.Time) Date {
+  return Date{
+    date.Year(),
+    int(date.Month()),
+    date.Day(),
+  }
+}
+
 func logRequest(req *http.Request) {
   log.Printf("Received request for %s", req.URL.String())
 }
@@ -65,11 +94,9 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
 
   date := getNextScheduledMessageTime()
   run := Run{
-    // We use 0 padded RFC3339 representation of the date as our primary
-    // key. This works as the lexicographic order follows the calendar's.
-    // We pad the year with a zero to be safe. Also it matches the format
-    // from Long Now Foundation, which is cool!
-    fmt.Sprintf("%05d-%02d-%02d", date.Year(), date.Month(), date.Day()),
+    // TODO: We can probably get away with some string conversion.
+    // I couldn't make it work though...
+    date.toString(),
     []Event{},
     nil}
   err := UpsertRun(run)
@@ -102,18 +129,18 @@ func getSecondThursdayForYearAndMonth(year int, month time.Month, pst *time.Loca
   return firstThursday.AddDate(/*years=*/0, /*months=*/0, /*days=*/7)
 }
 
-func getNextScheduledMessageTime() time.Time {
+func getNextScheduledMessageTime() Date {
   today := time.Now()
   location := today.UTC().Location()
   // Check this month for the next date.
   // If it is passed, we look for the scheduled time next month.
   secondThursdayOfThisMonth := getSecondThursdayForYearAndMonth(today.Year(), today.Month(), location)
   if (secondThursdayOfThisMonth.After(today)) {
-    return secondThursdayOfThisMonth
+    return convertToDate(secondThursdayOfThisMonth)
   }
 
   // This call correctly handles December as Date wraps the month into the new year.
-  return getSecondThursdayForYearAndMonth(today.Year(), today.Month() + 1, location)
+  return convertToDate(getSecondThursdayForYearAndMonth(today.Year(), today.Month() + 1, location))
 }
 
 
