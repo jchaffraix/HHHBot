@@ -1,0 +1,5 @@
+cron:
+- description: "weekly job"
+  url: /cron
+  schedule: every Thursday 09:00
+  timezone: America/Los Angeles

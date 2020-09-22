@@ -3,14 +3,21 @@ package main
 import (
   "context"
   "encoding/json"
+  "errors"
   "fmt"
+  "io/ioutil"
   "log"
   "net/http"
   "os"
+  "strconv"
+  "strings"
   "time"
 
   // DB.
   "cloud.google.com/go/datastore"
+
+  secretmanager "cloud.google.com/go/secretmanager/apiv1"
+  secretmanagerpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
 )
 
 // *****************
@@ -26,6 +33,10 @@ type Date struct {
   Day int
 }
 
+func (d Date) Is(other Date) bool {
+  return d.Year == other.Year && d.Month == other.Month && d.Day == other.Day
+}
+
 func (d Date) After(other Date) bool {
   return d.Year > other.Year || d.Month > other.Month || d.Day > other.Day
 }
@@ -36,6 +47,37 @@ func (d Date) toString() string {
   // We pad the year with a zero to be safe. Also it matches the format
   // from Long Now Foundation, which is cool!
   return fmt.Sprintf("%05d-%02d-%02d", d.Year, d.Month, d.Day)
+}
+
+func parseDate(date string) (*Date, error) {
+  if len(date) != 11 {
+    return nil, errors.New("Wrong size for date=" + date)
+  }
+
+  year, err := strconv.Atoi(date[0:5])
+  if err != nil {
+    return nil, err
+  }
+  month, err := strconv.Atoi(date[6:8])
+  if err != nil {
+    return nil, err
+  }
+  if month > 12 {
+    return nil, errors.New("Invalid month for date=" + date)
+  }
+  day, err := strconv.Atoi(date[9:11])
+  if err != nil {
+    return nil, err
+  }
+  if day > 31 {
+    return nil, errors.New("Invalid day for date=" + date)
+  }
+
+  return &Date{
+    year,
+    month,
+    day,
+  }, nil
 }
 
 func convertToDate(date time.Time) Date {
@@ -109,6 +151,45 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
 
   w.Header().Set("Content-Type", "application/json")
   w.Write([]byte("true"))
+}
+
+func cronHandler(w http.ResponseWriter, req *http.Request) {
+  logRequest(req)
+
+  // Check header: X-Appengine-Cron: true
+
+  newestRun, err := GetNewestRun()
+  if err != nil {
+    log.Printf("[ERROR] Failed to get newest run=%v, err=%v", newestRun, err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  runDate, err := parseDate(newestRun.Date)
+  if err != nil {
+    log.Printf("[ERROR] Failed to parse the date of the newest run=%v, err=%v", newestRun, err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  today := convertToDate(time.Now())
+  if !runDate.Is(today) {
+    log.Printf("Nothing to do today=%s, runDate=%s", today.toString(), runDate.toString())
+    w.Write([]byte("Nothing to do"))
+    return
+  }
+
+  log.Printf("Running today=%s", today.toString())
+
+  err = postBlockMessageToChannel(string(messagePayload))
+  if err != nil {
+    log.Printf("Couldn't post: %v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  w.Write([]byte("Sent"))
+  // TODO: Add the next event!
 }
 
 // ***************
@@ -202,6 +283,106 @@ func UpsertRun(run Run) error {
   return err
 }
 
+// TODO: Remove this and use the DB to store the token.
+// ***************
+// Secret handling
+// ***************
+
+func getBotToken() (string, error) {
+  ctx := context.Background()
+  client, err := secretmanager.NewClient(ctx)
+  if err != nil {
+          return "", err
+  }
+
+  req := &secretmanagerpb.AccessSecretVersionRequest{
+          Name: os.Getenv("BOT_TOKEN_SECRET"),
+  }
+  result, err := client.AccessSecretVersion(ctx, req)
+  if err != nil {
+          return "", err
+  }
+
+  // Some editors leave some trailing \n in the secret so trim them out.
+  return strings.TrimSpace(string(result.Payload.Data)), nil
+}
+
+// ***************
+// Slack messaging
+// ***************
+
+const messagePayload string = `[
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*HHH is in one week*"
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "Add your availability with an emoji: :no: if you're unavailable. Anything else for yes :party-parrot:"
+    }
+  },
+  {
+    "type": "actions",
+    "elements": [
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Skip this one :sadpanda:",
+          "emoji": true
+        },
+        "value": "skip"
+      }
+    ]
+  },
+  {
+    "type": "actions",
+    "elements": [
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Postpone by one week",
+          "emoji": true
+        },
+        "value": "skip"
+      }
+    ]
+  }
+]`
+
+func postBlockMessageToChannel(payload string) error {
+  botToken, err := getBotToken()
+  if err != nil {
+    return err
+  }
+
+  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"blocks\": %s }", os.Getenv("CHANNEL_ID"), payload)
+  log.Printf("Payload to be send: %s", fullPayload)
+  bodyReader := strings.NewReader(fullPayload)
+  req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bodyReader)
+  req.Header.Add("Content-Type", "application/json")
+  req.Header.Add("Authorization", "Bearer " + botToken)
+
+  defaultClient := &http.Client{}
+  resp, err := defaultClient.Do(req)
+  if err != nil {
+	return err
+  }
+  defer resp.Body.Close()
+  body, err := ioutil.ReadAll(resp.Body)
+  if err != nil {
+	return err
+  }
+  log.Printf("Response: %s", string(body))
+  return nil
+}
+
 
 // ****
 // main
@@ -211,6 +392,7 @@ func main() {
   http.HandleFunc("/", mainPageHandler)
   http.HandleFunc("/newestRun", newestRunHandler)
   http.HandleFunc("/scheduleRun", scheduleRunHandler)
+  http.HandleFunc("/cron", cronHandler)
 
   port := os.Getenv("PORT")
   if port == "" {
