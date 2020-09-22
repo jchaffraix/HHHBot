@@ -30,7 +30,20 @@ function setUp() {
       $("#scheduleNextTask").parent().attr("fail", true);
     });
   });
+
+  $("#testMessage").click(function() {
+    $("#testMessage").attr("disabled", true);
+    $.get({
+      url: "/testMessage",
+    }).done(function() {
+      $("#testMessage").parent().attr("pass", true);
+      loadScheduledData();
+    }).fail(function() {
+      $("#testMessage").parent().attr("fail", true);
+    });
+  });
 }
+
 window.addEventListener("load", setUp);
 </script>
 <style>
@@ -52,4 +65,5 @@ p[fail]:after {
 </style>
 <p>🚧🚧 Under construction 🚧🚧</p>
 <p>Next scheduled run: <span id="nextRun"></span><button id="scheduleRun" type="button" class="hidden">Schedule it!</button></p>
+<p><button id="testMessage" type="button">Sent test message</button></p>
 <p>Server is <span style="color:green">working</span>.</p>

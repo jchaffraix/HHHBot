@@ -188,8 +188,21 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
-  w.Write([]byte("Sent"))
+  w.Write([]byte("Message sent"))
   // TODO: Add the next event!
+}
+
+func testMessageHandler(w http.ResponseWriter, req *http.Request) {
+  logRequest(req)
+
+  err := postBlockMessageToChannel(string(testPayload))
+  if err != nil {
+    log.Printf("Couldn't post: %v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  w.Write([]byte("Message sent"))
 }
 
 // ***************
@@ -356,6 +369,23 @@ const messagePayload string = `[
   }
 ]`
 
+const testPayload string = `[
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "Test message :deal-with-it-parrot:"
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "Brought to you by :babyyoda:"
+    }
+  }
+]`
+
 func postBlockMessageToChannel(payload string) error {
   botToken, err := getBotToken()
   if err != nil {
@@ -393,6 +423,7 @@ func main() {
   http.HandleFunc("/newestRun", newestRunHandler)
   http.HandleFunc("/scheduleRun", scheduleRunHandler)
   http.HandleFunc("/cron", cronHandler)
+  http.HandleFunc("/testMessage", testMessageHandler)
 
   port := os.Getenv("PORT")
   if port == "" {
