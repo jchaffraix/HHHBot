@@ -398,6 +398,13 @@ const testPayload string = `[
   }
 ]`
 
+type postMessageReply struct {
+  Ok bool `json:"ok"`
+  Error string
+  Channel string `json:"ts"`
+  Timestamp string `json:"ts"`
+}
+
 func postBlockMessageToChannel(payload string) error {
   botToken, err := getBotToken()
   if err != nil {
@@ -414,17 +421,28 @@ func postBlockMessageToChannel(payload string) error {
   defaultClient := &http.Client{}
   resp, err := defaultClient.Do(req)
   if err != nil {
-	return err
+    return err
   }
   defer resp.Body.Close()
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
-	return err
+    return err
   }
-  log.Printf("Response: %s", string(body))
+  log.Printf("Response: %s", body)
+  var parsedReply postMessageReply
+  err = json.Unmarshal(body, &parsedReply)
+  if err != nil {
+    return err
+  }
+
+  if !parsedReply.Ok {
+    return errors.New("Failed call to `chat.postMessage`, error=" + parsedReply.Error)
+  }
+
+
+  // TODO: Save the channel and the TS.
   return nil
 }
-
 
 // ****
 // main
