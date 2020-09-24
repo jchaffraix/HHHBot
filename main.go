@@ -302,6 +302,12 @@ func UpsertRun(run Run) error {
 // ***************
 
 func getBotToken() (string, error) {
+  // For local testing.
+  localToken := os.Getenv("BOT_TOKEN")
+  if localToken != "" {
+    return localToken, nil
+  }
+
   ctx := context.Background()
   client, err := secretmanager.NewClient(ctx)
   if err != nil {
