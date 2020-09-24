@@ -9,7 +9,7 @@ function loadScheduledData() {
       return;
     }
 
-    $("#nextRun").html(data.date);
+    $("#nextRun").html(data.schedule_date);
   }).fail(function () {
     $("#nextRun").html("Couldn't load!");
   });

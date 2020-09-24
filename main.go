@@ -134,13 +134,14 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
 func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
-  date := getNextScheduledMessageTime()
+  // TODO: Figure out how to make string conversion work for Date.
+  date := getNextScheduledMessageTime().toString()
   run := Run{
-    // TODO: We can probably get away with some string conversion.
-    // I couldn't make it work though...
-    date.toString(),
+    date,
+    date,
     []Event{},
-    nil}
+    nil,
+  }
   err := UpsertRun(run)
   if err != nil {
     log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
@@ -165,7 +166,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
-  runDate, err := parseDate(newestRun.Date)
+  scheduleDate, err := parseDate(newestRun.ScheduleDate)
   if err != nil {
     log.Printf("[ERROR] Failed to parse the date of the newest run=%v, err=%v", newestRun, err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
@@ -173,8 +174,8 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
   }
 
   today := convertToDate(time.Now())
-  if !runDate.Is(today) {
-    log.Printf("Nothing to do today=%s, runDate=%s", today.toString(), runDate.toString())
+  if !scheduleDate.Is(today) {
+    log.Printf("Nothing to do today=%s, scheduleDate=%s", today.toString(), scheduleDate.toString())
     w.Write([]byte("Nothing to do"))
     return
   }
@@ -252,14 +253,16 @@ type Event struct {
 }
 
 type Run struct {
-  // This is the hexadecimal representation of the Key.ID.
-  // It is not stored but is sometimes returned to our API.
-  // It is mandatory for updating and deleting.
-  //ID string `json:"id", datastore:"-"`
+  // Immutable creation date (we use it as a key).
+  // This is the 2nd Thursday of the month when the bot has to run.
+  //
+  // It is a date serialized using RFC3339 without TZ information.
+  CreateDate string `json:"create_date"`
 
-  // TODO: Should I store it as a time.Time?
-  // Currently date serialized using RFC3339.
-  Date string `json:"date"`
+  // When the task will run next.
+  // Can be the empty string if the task should not run.
+  ScheduleDate string `json:"schedule_date"`
+
   Postponements []Event `json:"postponements",datastore:",noindex"`
   Cancellation *Event `json:"cancellation",datastore:",noindex"`
 }
@@ -272,7 +275,7 @@ func GetNewestRun() (*Run, error) {
   }
 
   var newestRun []Run
-  q := datastore.NewQuery(RUN_TABLE).Order("-Date").Limit(1)
+  q := datastore.NewQuery(RUN_TABLE).Order("-CreateDate").Limit(1)
   if _, err := client.GetAll(ctx, q, &newestRun); err != nil {
     return nil, err
   }
@@ -290,7 +293,7 @@ func UpsertRun(run Run) error {
   if err != nil {
     return err
   }
-  k := datastore.NameKey(RUN_TABLE, run.Date, nil)
+  k := datastore.NameKey(RUN_TABLE, run.CreateDate, nil)
   key, err := client.Put(ctx, k, &run)
   log.Printf("Key from put=%v", key)
   return err
