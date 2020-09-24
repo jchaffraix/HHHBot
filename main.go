@@ -326,6 +326,15 @@ func getBotToken() (string, error) {
 
 const messagePayload string = `[
   {
+    "type": "rich_text_section",
+    "elements": [
+      {
+        "type": "broadcast",
+        "range": "channel"
+      }
+    ]
+  },
+  {
     "type": "section",
     "text": {
       "type": "mrkdwn",
@@ -338,6 +347,9 @@ const messagePayload string = `[
       "type": "mrkdwn",
       "text": "Add your availability with an emoji: :no: if you're unavailable. Anything else for yes :party-parrot:"
     }
+  },
+  {
+    "type": "divider",
   },
   {
     "type": "actions",
