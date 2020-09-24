@@ -116,7 +116,7 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
   }
 
   if newestRun == nil {
-    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Content-Type", "application/json; charset=utf-8")
     w.Write([]byte("null"))
     return
   }
@@ -127,7 +127,7 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
-  w.Header().Set("Content-Type", "application/json")
+  w.Header().Set("Content-Type", "application/json; charset=utf-8")
   w.Write([]byte(payload))
 }
 
@@ -144,12 +144,12 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   err := UpsertRun(run)
   if err != nil {
     log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
-    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Content-Type", "application/json; charset=utf-8")
     w.Write([]byte("false"))
     return
   }
 
-  w.Header().Set("Content-Type", "application/json")
+  w.Header().Set("Content-Type", "application/json; charset=utf-8")
   w.Write([]byte("true"))
 }
 
@@ -396,7 +396,7 @@ func postBlockMessageToChannel(payload string) error {
   log.Printf("Payload to be send: %s", fullPayload)
   bodyReader := strings.NewReader(fullPayload)
   req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bodyReader)
-  req.Header.Add("Content-Type", "application/json")
+  req.Header.Add("Content-Type", "application/json; charset=utf-8")
   req.Header.Add("Authorization", "Bearer " + botToken)
 
   defaultClient := &http.Client{}
