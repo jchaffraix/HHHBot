@@ -197,7 +197,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     }
 
     newestRun.Reactions = append(newestRun.Reactions, Reaction{event.User, event.Reaction})
-    err = UpsertRun(*newestRun)
+    err = UpsertRun(newestRun)
     if err != nil {
       log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
@@ -249,7 +249,7 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
     []Event{},
     /*Cancellation=*/nil,
   }
-  err := UpsertRun(run)
+  err := UpsertRun(&run)
   if err != nil {
     log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
     w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -299,7 +299,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     }
 
     newestRun.PostedMessage = messageInfo
-    err = UpsertRun(*newestRun)
+    err = UpsertRun(newestRun)
     if err != nil {
       log.Printf("Couldn't update the messageInfo in the DB: %v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
@@ -418,7 +418,7 @@ func GetNewestRun() (*Run, error) {
   return &newestRun[0], nil
 }
 
-func UpsertRun(run Run) error {
+func UpsertRun(run *Run) error {
   ctx := context.Background()
   client, err := datastore.NewClient(ctx, os.Getenv("PROJECT_ID"))
   if err != nil {
