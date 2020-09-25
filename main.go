@@ -190,20 +190,25 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
 
   log.Printf("Running today=%s", today.toString())
 
-  // TODO: Determine if we posted already.
-  messageInfo, err := postBlockMessageToChannel(string(messagePayload))
-  if err != nil {
-    log.Printf("Couldn't post: %v", err)
-    http.Error(w, "Internal Error", http.StatusInternalServerError)
-    return
-  }
+  if newestRun.PostedMessage == nil {
+    // Send the original message.
+    messageInfo, err := postBlockMessageToChannel(string(messagePayload))
+    if err != nil {
+      log.Printf("Couldn't post: %v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
 
-  newestRun.PostedMessage = messageInfo
-  err = UpsertRun(*newestRun)
-  if err != nil {
-    log.Printf("Couldn't update the messageInfo in the DB: %v", err)
-    http.Error(w, "Internal Error", http.StatusInternalServerError)
-    return
+    newestRun.PostedMessage = messageInfo
+    err = UpsertRun(*newestRun)
+    if err != nil {
+      log.Printf("Couldn't update the messageInfo in the DB: %v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
+  } else {
+    // This is the day of HHH.
+    // TODO: Send a reminder about it if it is not cancelled.
   }
 
   w.Write([]byte("OK"))
