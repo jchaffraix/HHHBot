@@ -120,6 +120,20 @@ type VerificationEvent struct {
   Challenge string
 }
 
+type MessageItem struct {
+  Type string // Should be "message".
+  Channel string
+  Timestamp string `json:"ts"`
+}
+
+type ReactionAddedRemovedEvent struct {
+  User string
+  Reaction string
+  // Ignored "item_user"
+  Item MessageItem
+  // Ignored "event_ts"
+}
+
 func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
@@ -150,7 +164,49 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     w.Header().Set("Content-Type", "application/json; charset=utf-8")
     w.Write([]byte(fmt.Sprintf("{\"challenge\": \"%s\"", event.Challenge)))
     return
+  } else if genericEvent.Type == "reaction_added" {
+    var event ReactionAddedRemovedEvent
+    err = json.Unmarshal(eventPayload, &event)
+    if err != nil {
+      log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
+
+    newestRun, err := GetNewestRun()
+    if err != nil {
+      log.Printf("[ERROR] Couldn't get the latest run, err=%v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
+
+    // Return a 200 OK by default.
+    w.Write([]byte(""))
+
+    // Check that this corresponds to the message from our run.
+    if newestRun.PostedMessage == nil {
+      return
+    }
+
+    if event.Item.Type != "message" {
+      return
+    }
+
+    if event.Item.Channel != newestRun.PostedMessage.Channel || event.Item.Timestamp != newestRun.PostedMessage.Timestamp {
+      return
+    }
+
+    newestRun.Reactions = append(newestRun.Reactions, Reaction{event.User, event.Reaction})
+    err = UpsertRun(*newestRun)
+    if err != nil {
+      log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
+
+    return
   }
+
   log.Printf("[ERROR] Unhandled event type: %s", genericEvent.Type)
 }
 
@@ -188,9 +244,10 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   run := Run{
     date,
     date,
-    nil,
+    /*PostedMessage=*/nil,
+    []Reaction{},
     []Event{},
-    nil,
+    /*Cancellation=*/nil,
   }
   err := UpsertRun(run)
   if err != nil {
@@ -315,6 +372,11 @@ type Event struct {
   TimestampSec string `json:"timestamp_sec", datastore:",noindex"`
 }
 
+type Reaction struct {
+  User string
+  Reaction string
+}
+
 type Run struct {
   // Immutable creation date (we use it as a key).
   // This is the 2nd Thursday of the month when the bot has to run.
@@ -328,6 +390,9 @@ type Run struct {
 
   // Posted message. Can be nil.
   PostedMessage *MessageInfo
+
+  // Reactions.
+  Reactions []Reaction
 
   Postponements []Event `json:"postponements",datastore:",noindex"`
   Cancellation *Event `json:"cancellation",datastore:",noindex"`
