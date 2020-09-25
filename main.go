@@ -354,19 +354,10 @@ func getBotToken() (string, error) {
 
 const messagePayload string = `[
   {
-    "type": "rich_text_section",
-    "elements": [
-      {
-        "type": "broadcast",
-        "range": "channel"
-      }
-    ]
-  },
-  {
     "type": "section",
     "text": {
       "type": "mrkdwn",
-      "text": "*HHH is in one week*"
+      "text": "@channel *HHH is in one week*"
     }
   },
   {
@@ -414,7 +405,7 @@ const testPayload string = `[
     "type": "section",
     "text": {
       "type": "mrkdwn",
-      "text": "Test message :deal-with-it-parrot:"
+      "text": "@channel Test message :deal-with-it-parrot:"
     }
   },
   {
