@@ -20,10 +20,6 @@ import (
   secretmanagerpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
 )
 
-// *****************
-// Request handling.
-// *****************
-
 // A lightweight Date.
 // Unfortunately the time module doesn't define this
 // but returns the triple instead.
@@ -87,6 +83,10 @@ func convertToDate(date time.Time) Date {
     date.Day(),
   }
 }
+
+// *****************
+// Request handling.
+// *****************
 
 func logRequest(req *http.Request) {
   log.Printf("Received request for %s", req.URL.String())
