@@ -112,6 +112,48 @@ func mainPageHandler(w http.ResponseWriter, req *http.Request) {
   http.ServeFile(w, req, "index.html")
 }
 
+type GenericEvent struct {
+  Type string
+}
+
+type VerificationEvent struct {
+  Challenge string
+}
+
+func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
+  logRequest(req)
+
+  eventPayload, err := ioutil.ReadAll(req.Body)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't read event body, err=%v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  var genericEvent GenericEvent
+  err = json.Unmarshal(eventPayload, &genericEvent)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't parse generic event, err=%v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  if genericEvent.Type == "url_verification" {
+    var event VerificationEvent
+    err = json.Unmarshal(eventPayload, &event)
+    if err != nil {
+      log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      return
+    }
+
+    w.Header().Set("Content-Type", "application/json; charset=utf-8")
+    w.Write([]byte(fmt.Sprintf("{\"challenge\": \"%s\"", event.Challenge)))
+    return
+  }
+  log.Printf("[ERROR] Unhandled event type: %s", genericEvent.Type)
+}
+
 func newestRunHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
@@ -473,6 +515,7 @@ func postBlockMessageToChannel(payload string) (*MessageInfo, error) {
 func main() {
   http.HandleFunc("/", mainPageHandler)
   http.HandleFunc("/newestRun", newestRunHandler)
+  http.HandleFunc("/slack/events", slackEventsHandler)
   http.HandleFunc("/scheduleRun", scheduleRunHandler)
   http.HandleFunc("/cron", cronHandler)
   http.HandleFunc("/testMessage", testMessageHandler)
