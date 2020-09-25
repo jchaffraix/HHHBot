@@ -84,6 +84,13 @@ func convertToDate(date time.Time) Date {
   }
 }
 
+// Information about the parsed message.
+// Used for `conversations.
+type MessageInfo struct {
+  Channel string
+  Timestamp string
+}
+
 // *****************
 // Request handling.
 // *****************
@@ -139,6 +146,7 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   run := Run{
     date,
     date,
+    nil,
     []Event{},
     nil,
   }
@@ -182,28 +190,36 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
 
   log.Printf("Running today=%s", today.toString())
 
-  err = postBlockMessageToChannel(string(messagePayload))
+  // TODO: Determine if we posted already.
+  messageInfo, err := postBlockMessageToChannel(string(messagePayload))
   if err != nil {
     log.Printf("Couldn't post: %v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
 
-  w.Write([]byte("Message sent"))
-  // TODO: Add the next event!
+  newestRun.PostedMessage = messageInfo
+  err = UpsertRun(*newestRun)
+  if err != nil {
+    log.Printf("Couldn't update the messageInfo in the DB: %v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  w.Write([]byte("OK"))
 }
 
 func testMessageHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
-  err := postBlockMessageToChannel(string(testPayload))
+  messageInfo, err := postBlockMessageToChannel(string(testPayload))
   if err != nil {
     log.Printf("Couldn't post: %v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
 
-  w.Write([]byte("Message sent"))
+  w.Write([]byte(fmt.Sprintf("Message sent, channel:%s, ts:%s", messageInfo.Channel, messageInfo.Timestamp)))
 }
 
 // ***************
@@ -262,6 +278,9 @@ type Run struct {
   // When the task will run next.
   // Can be the empty string if the task should not run.
   ScheduleDate string `json:"schedule_date"`
+
+  // Posted message. Can be nil.
+  PostedMessage *MessageInfo
 
   Postponements []Event `json:"postponements",datastore:",noindex"`
   Cancellation *Event `json:"cancellation",datastore:",noindex"`
@@ -410,14 +429,14 @@ const testPayload string = `[
 type postMessageReply struct {
   Ok bool `json:"ok"`
   Error string
-  Channel string `json:"ts"`
+  Channel string `json:"channel"`
   Timestamp string `json:"ts"`
 }
 
-func postBlockMessageToChannel(payload string) error {
+func postBlockMessageToChannel(payload string) (*MessageInfo, error) {
   botToken, err := getBotToken()
   if err != nil {
-    return err
+    return nil, err
   }
 
   fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"blocks\": %s }", os.Getenv("CHANNEL_ID"), payload)
@@ -430,27 +449,25 @@ func postBlockMessageToChannel(payload string) error {
   defaultClient := &http.Client{}
   resp, err := defaultClient.Do(req)
   if err != nil {
-    return err
+    return nil, err
   }
   defer resp.Body.Close()
   body, err := ioutil.ReadAll(resp.Body)
   if err != nil {
-    return err
+    return nil, err
   }
   log.Printf("Response: %s", body)
   var parsedReply postMessageReply
   err = json.Unmarshal(body, &parsedReply)
   if err != nil {
-    return err
+    return nil, err
   }
 
   if !parsedReply.Ok {
-    return errors.New("Failed call to `chat.postMessage`, error=" + parsedReply.Error)
+    return nil, errors.New("Failed call to `chat.postMessage`, error=" + parsedReply.Error)
   }
 
-
-  // TODO: Save the channel and the TS.
-  return nil
+  return &MessageInfo{parsedReply.Channel, parsedReply.Timestamp}, nil
 }
 
 // ****
