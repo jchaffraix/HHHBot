@@ -127,11 +127,22 @@ type MessageItem struct {
 }
 
 type ReactionAddedRemovedEvent struct {
+  Type string
   User string
   Reaction string
   // Ignored "item_user"
   Item MessageItem
   // Ignored "event_ts"
+}
+
+type OuterReactionEvent struct {
+  Token string
+  // Ignored team_id
+  // Ignored api_app_id
+  Event ReactionAddedRemovedEvent
+  // Ignored authed_users
+  // Ignored event_id
+  // Ignored event_time
 }
 
 func reactionEventIsForRun(event ReactionAddedRemovedEvent, run *Run) bool {
@@ -179,9 +190,9 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     w.Header().Set("Content-Type", "application/json; charset=utf-8")
     w.Write([]byte(fmt.Sprintf("{\"challenge\": \"%s\"", event.Challenge)))
     return
-  } else if genericEvent.Type == "reaction_added" {
-    var event ReactionAddedRemovedEvent
-    err = json.Unmarshal(eventPayload, &event)
+  } else if genericEvent.Type == "event_callback" {
+    var outerEvent OuterReactionEvent
+    err = json.Unmarshal(eventPayload, &outerEvent)
     if err != nil {
       log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
@@ -195,72 +206,78 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       return
     }
 
-    // Check that this corresponds to the message from our run.
-    if !reactionEventIsForRun(event, newestRun) {
-      w.Write([]byte(""))
-      return
-    }
-
-    newestRun.Reactions = append(newestRun.Reactions, Reaction{event.User, event.Reaction})
-    err = UpsertRun(newestRun)
-    if err != nil {
-      log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
-      http.Error(w, "Internal Error", http.StatusInternalServerError)
-      return
-    }
-
-    w.Write([]byte(""))
-    return
-  } else if genericEvent.Type == "reaction_removed" {
-    var event ReactionAddedRemovedEvent
-    err = json.Unmarshal(eventPayload, &event)
-    if err != nil {
-      log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
-      http.Error(w, "Internal Error", http.StatusInternalServerError)
-      return
-    }
-
-    newestRun, err := GetNewestRun()
-    if err != nil {
-      log.Printf("[ERROR] Couldn't get the latest run, err=%v", err)
-      http.Error(w, "Internal Error", http.StatusInternalServerError)
-      return
-    }
-
-    // Check that this corresponds to the message from our run.
-    if !reactionEventIsForRun(event, newestRun) {
-      w.Write([]byte(""))
-      return
-    }
-
-    index := -1
-    for i, reaction := range newestRun.Reactions {
-      if reaction.User == event.User && reaction.Reaction == event.Reaction {
-        index = i
-        break
+    event := outerEvent.Event
+    if event.Type == "reaction_added" {
+      // Check that this corresponds to the message from our run.
+      if !reactionEventIsForRun(event, newestRun) {
+        w.Write([]byte(""))
+        return
       }
-    }
 
-    if index == -1 {
-      log.Printf("[ERROR] Couldn't find the reaction in our DB, reaction_removed event=%v", event)
-      // We return a 200 OK as we don't have anything to do.
+      newestRun.Reactions = append(newestRun.Reactions, Reaction{event.User, event.Reaction})
+      err = UpsertRun(newestRun)
+      if err != nil {
+        log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+        http.Error(w, "Internal Error", http.StatusInternalServerError)
+        return
+      }
+
       w.Write([]byte(""))
       return
-    }
+    } else if event.Type == "reaction_removed" {
+      var event ReactionAddedRemovedEvent
+      err = json.Unmarshal(eventPayload, &event)
+      if err != nil {
+        log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+        http.Error(w, "Internal Error", http.StatusInternalServerError)
+        return
+      }
 
-    // Fast delete by swapping to the last item and shortening.
-    newestRun.Reactions[index] = newestRun.Reactions[len(newestRun.Reactions) - 1]
-    newestRun.Reactions = newestRun.Reactions[:len(newestRun.Reactions) - 1]
+      newestRun, err := GetNewestRun()
+      if err != nil {
+        log.Printf("[ERROR] Couldn't get the latest run, err=%v", err)
+        http.Error(w, "Internal Error", http.StatusInternalServerError)
+        return
+      }
 
-    err = UpsertRun(newestRun)
-    if err != nil {
-      log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
-      http.Error(w, "Internal Error", http.StatusInternalServerError)
+      // Check that this corresponds to the message from our run.
+      if !reactionEventIsForRun(event, newestRun) {
+        w.Write([]byte(""))
+        return
+      }
+
+      index := -1
+      for i, reaction := range newestRun.Reactions {
+        if reaction.User == event.User && reaction.Reaction == event.Reaction {
+          index = i
+          break
+        }
+      }
+
+      if index == -1 {
+        log.Printf("[ERROR] Couldn't find the reaction in our DB, reaction_removed event=%v", event)
+        // We return a 200 OK as we don't have anything to do.
+        w.Write([]byte(""))
+        return
+      }
+
+      // Fast delete by swapping to the last item and shortening.
+      newestRun.Reactions[index] = newestRun.Reactions[len(newestRun.Reactions) - 1]
+      newestRun.Reactions = newestRun.Reactions[:len(newestRun.Reactions) - 1]
+
+      err = UpsertRun(newestRun)
+      if err != nil {
+        log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+        http.Error(w, "Internal Error", http.StatusInternalServerError)
+        return
+      }
+
+      w.Write([]byte(""))
+      return
+    } else {
+      log.Printf("[ERROR] Unhandled event_callback type: %s", event.Type)
       return
     }
-
-    w.Write([]byte(""))
-    return
   }
 
   log.Printf("[ERROR] Unhandled event type: %s", genericEvent.Type)
