@@ -9,7 +9,12 @@ function loadScheduledData() {
       return;
     }
 
-    $("#nextRun").html(data.schedule_date);
+		if (data.schedule_date != "") {
+			$("#nextRun").html(data.schedule_date);
+		} else {
+			$("#nextRun").html("Old run found, nothing scheduled");
+      $("#scheduleRun").removeClass("hidden");
+		}
   }).fail(function () {
     $("#nextRun").html("Couldn't load!");
   });
