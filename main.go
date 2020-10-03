@@ -459,13 +459,13 @@ type Run struct {
 
   // When the task will run next.
   // Can be the empty string if the task should not run.
-  ScheduleDate string `json:"schedule_date"`
+  ScheduleDate string `json:"schedule_date",datastore:",noindex"`
 
   // Posted message. Can be nil.
-  PostedMessage *MessageInfo
+  PostedMessage *MessageInfo `datastore:",noindex"`
 
   // Reactions.
-  Reactions []Reaction
+  Reactions []Reaction `datastore:",noindex"`
 
   Postponements []Event `json:"postponements",datastore:",noindex"`
   Cancellation *Event `json:"cancellation",datastore:",noindex"`
