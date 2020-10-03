@@ -177,7 +177,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
 
   eventPayload, err := ioutil.ReadAll(req.Body)
   if err != nil {
-    log.Printf("[ERROR] Couldn't read event body, err=%v", err)
+    log.Printf("[ERROR] Couldn't read event body, err=%+v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -186,7 +186,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
   var genericEvent GenericEvent
   err = json.Unmarshal(eventPayload, &genericEvent)
   if err != nil {
-    log.Printf("[ERROR] Couldn't parse generic event, err=%v", err)
+    log.Printf("[ERROR] Couldn't parse generic event, err=%+v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -195,7 +195,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     var event VerificationEvent
     err = json.Unmarshal(eventPayload, &event)
     if err != nil {
-      log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+      log.Printf("[ERROR] Couldn't parse verification event, err=%+v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
@@ -207,14 +207,14 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     var outerEvent OuterReactionEvent
     err = json.Unmarshal(eventPayload, &outerEvent)
     if err != nil {
-      log.Printf("[ERROR] Couldn't parse event_callback event, err=%v", err)
+      log.Printf("[ERROR] Couldn't parse event_callback event, err=%+v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
 
     newestRun, err := GetNewestRun()
     if err != nil {
-      log.Printf("[ERROR] Couldn't get the latest run, err=%v", err)
+      log.Printf("[ERROR] Couldn't get the latest run, err=%+v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
@@ -224,7 +224,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       log.Printf("Received a `reaction_added` event")
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
-	log.Printf("Ignored the event as it was for a different message, event=%v", event)
+	log.Printf("Ignored the event as it was for a different message, event=%+v", event)
         w.Write([]byte(""))
         return
       }
@@ -232,7 +232,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       newestRun.Reactions = append(newestRun.Reactions, Reaction{event.User, event.Reaction})
       err = UpsertRun(newestRun)
       if err != nil {
-        log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+        log.Printf("[ERROR] Failed to upsert new run, err=%+v", err)
         http.Error(w, "Internal Error", http.StatusInternalServerError)
         return
       }
@@ -244,21 +244,21 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       var event ReactionAddedRemovedEvent
       err = json.Unmarshal(eventPayload, &event)
       if err != nil {
-        log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+        log.Printf("[ERROR] Couldn't parse verification event, err=%+v", err)
         http.Error(w, "Internal Error", http.StatusInternalServerError)
         return
       }
 
       newestRun, err := GetNewestRun()
       if err != nil {
-        log.Printf("[ERROR] Couldn't get the latest run, err=%v", err)
+        log.Printf("[ERROR] Couldn't get the latest run, err=%+v", err)
         http.Error(w, "Internal Error", http.StatusInternalServerError)
         return
       }
 
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
-	log.Printf("Ignored the event as it was for a different message, event=%v", event)
+	log.Printf("Ignored the event as it was for a different message, event=%+v", event)
         w.Write([]byte(""))
         return
       }
@@ -272,7 +272,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       }
 
       if index == -1 {
-        log.Printf("[ERROR] Couldn't find the reaction in our DB, reaction_removed event=%v", event)
+        log.Printf("[ERROR] Couldn't find the reaction in our DB, reaction_removed event=%+v", event)
         // We return a 200 OK as we don't have anything to do.
         w.Write([]byte(""))
         return
@@ -284,7 +284,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
 
       err = UpsertRun(newestRun)
       if err != nil {
-        log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+        log.Printf("[ERROR] Failed to upsert new run, err=%+v", err)
         http.Error(w, "Internal Error", http.StatusInternalServerError)
         return
       }
@@ -305,7 +305,7 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
 
   newestRun, err := GetNewestRun()
   if err != nil {
-    log.Printf("[ERROR] Failed getting the runs, err=%v", err)
+    log.Printf("[ERROR] Failed getting the runs, err=%+v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -318,7 +318,7 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
 
   payload, err := json.Marshal(newestRun)
   if err != nil {
-    log.Printf("[ERROR] Failed marshalling newestRun for response=%v, err=%v", newestRun, err)
+    log.Printf("[ERROR] Failed marshalling newestRun for response=%+v, err=%+v", newestRun, err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -331,7 +331,7 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
 
   err := ScheduleRun()
   if err != nil {
-    log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
+    log.Printf("[ERROR] Failed to upsert new run, err=%+v", err)
     w.Header().Set("Content-Type", "application/json; charset=utf-8")
     w.Write([]byte("false"))
     return
@@ -354,7 +354,7 @@ func GetTodayOrOverride(req *http.Request) Date {
 
   todayPtr, err := parseDate(todayStr[0])
   if err != nil || todayPtr == nil {
-    log.Printf("[ERROR] Failed to parse the date %s passed in the query, err=%v", todayStr, err)
+    log.Printf("[ERROR] Failed to parse the date %s passed in the query, err=%+v", todayStr, err)
     return convertToDate(time.Now())
   }
   return *todayPtr
@@ -362,13 +362,13 @@ func GetTodayOrOverride(req *http.Request) Date {
 
 func cronHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
-  log.Printf("Headers: %v", req.Header)
+  log.Printf("Headers: %+v", req.Header)
 
   // Check header: X-Appengine-Cron: true
 
   newestRun, err := GetNewestRun()
   if err != nil {
-    log.Printf("[ERROR] Failed to get newest run=%v, err=%v", newestRun, err)
+    log.Printf("[ERROR] Failed to get newest run=%+v, err=%+v", newestRun, err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -377,7 +377,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     // If we are missing the next run, just schedule it manually.
     err = ScheduleRun()
     if err != nil {
-      log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%v", err)
+      log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%+v", err)
     }
     w.Write([]byte("Rescheduled"))
     return
@@ -385,7 +385,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
 
   scheduleDate, err := parseDate(newestRun.ScheduleDate)
   if err != nil {
-    log.Printf("[ERROR] Failed to parse the date of the newest run=%v, err=%v", newestRun, err)
+    log.Printf("[ERROR] Failed to parse the date of the newest run=%+v, err=%+v", newestRun, err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -403,7 +403,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     // Send the original message.
     messageInfo, err := postBlockMessageToChannel(string(firstMessagePayload))
     if err != nil {
-      log.Printf("Couldn't post: %v", err)
+      log.Printf("Couldn't post: %+v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
@@ -415,7 +415,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     newestRun.ScheduleDate = today.AddOneWeek().toString()
     err = UpsertRun(newestRun)
     if err != nil {
-      log.Printf("Couldn't update the messageInfo in the DB: %v", err)
+      log.Printf("Couldn't update the messageInfo in the DB: %+v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
@@ -426,18 +426,18 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     if (len(newestRun.Reactions) > 3) {
 	    messageInfo, err := postBlockMessageToChannel(string(hhhReminderMessagePayload))
 	    if err != nil {
-	      log.Printf("Couldn't post: %v", err)
+	      log.Printf("Couldn't post: %+v", err)
 	      // We still return a 200 OK to prevent retries.
 	      w.Write([]byte("Failed posting"))
 	      return
 	    }
-	    log.Printf("New message: %v", messageInfo)
+	    log.Printf("New message: %+v", messageInfo)
     }
     // Clear the next run date.
     newestRun.ScheduleDate = ""
     err = UpsertRun(newestRun)
     if err != nil {
-      log.Printf("Couldn't update the run: %v", err)
+      log.Printf("Couldn't update the run: %+v", err)
       // We still return a 200 OK to prevent retries.
       w.Write([]byte("Failed run update"))
       return
@@ -454,7 +454,7 @@ func testMessageHandler(w http.ResponseWriter, req *http.Request) {
 
   messageInfo, err := postBlockMessageToChannel(string(testPayload))
   if err != nil {
-    log.Printf("Couldn't post: %v", err)
+    log.Printf("Couldn't post: %+v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
