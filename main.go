@@ -8,6 +8,7 @@ import (
   "io/ioutil"
   "log"
   "net/http"
+  "net/url"
   "os"
   "strconv"
   "strings"
@@ -41,7 +42,7 @@ func (d Date) AddOneWeek() Date {
   today := time.Now()
   location := today.UTC().Location()
   date := time.Date(d.Year, time.Month(d.Month), d.Day, /*hour=*/9, /*min=*/0, /*sec=*/0, /*nsec=*/0, location)
-  date.AddDate(/*years=*/0, /*months=*/0, /*days=*/7)
+  date = date.AddDate(/*years=*/0, /*months=*/0, /*days=*/7)
   return convertToDate(date)
 }
 
@@ -334,6 +335,25 @@ func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   w.Write([]byte("true"))
 }
 
+func GetTodayOrOverride(req *http.Request) Date {
+  m, err := url.ParseQuery(req.URL.RawQuery)
+  if err != nil {
+    return convertToDate(time.Now())
+  }
+
+  todayStr, exist := m["today"]
+  if !exist {
+    return convertToDate(time.Now())
+  }
+
+  todayPtr, err := parseDate(todayStr[0])
+  if err != nil || todayPtr == nil {
+    log.Printf("[ERROR] Failed to parse the date %s passed in the query, err=%v", todayStr, err)
+    return convertToDate(time.Now())
+  }
+  return *todayPtr
+}
+
 func cronHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
@@ -346,13 +366,13 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
-  if newestRun == nil {
+  if newestRun == nil || newestRun.ScheduleDate == "" {
     // If we are missing the next run, just schedule it manually.
     err = ScheduleRun()
     if err != nil {
       log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%v", err)
-      return
     }
+    return
   }
 
   scheduleDate, err := parseDate(newestRun.ScheduleDate)
@@ -362,7 +382,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
-  today := convertToDate(time.Now())
+  today := GetTodayOrOverride(req)
   if !scheduleDate.Is(today) {
     log.Printf("Nothing to do today=%s, scheduleDate=%s", today.toString(), scheduleDate.toString())
     w.Write([]byte("Nothing to do"))
