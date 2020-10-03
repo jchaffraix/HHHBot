@@ -407,13 +407,20 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
-  if newestRun == nil || newestRun.ScheduleDate == "" {
+  if newestRun == nil {
     // If we are missing the next run, just schedule it manually.
     err = ScheduleRun()
     if err != nil {
       log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%+v", err)
     }
     w.Write([]byte("Rescheduled"))
+    return
+  }
+  if newestRun.ScheduleDate == "" {
+    // The latest run is not scheduled.
+    // Log it and bail out as it can be due to cancellation.
+    log.Printf("Latest runs is not scheduled: %+v", newestRun)
+    w.Write([]byte("Nothing scheduled"))
     return
   }
 
