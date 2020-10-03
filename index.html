@@ -23,11 +23,15 @@ function setUp() {
     $("#scheduleRun").attr("disabled", true);
     $.get({
       url: "/scheduleRun",
-    }).done(function() {
-      $("#scheduleNextTask").parent().attr("pass", true);
-      loadScheduledData();
+    }).done(function(data) {
+			if (data === true) {
+				$("#nextRun").parent().attr("pass", true);
+				loadScheduledData();
+			} else {
+				$("#nextRun").parent().attr("fail", true);
+			}
     }).fail(function() {
-      $("#scheduleNextTask").parent().attr("fail", true);
+      $("#nextRun").parent().attr("fail", true);
     });
   });
 
@@ -55,11 +59,11 @@ window.addEventListener("load", setUp);
   visibility: hidden;
 }
 
-p[pass]:after {
+*[pass]:after {
   content: "✔️"
 }
 
-p[fail]:after {
+*[fail]:after {
   content: "❌"
 }
 </style>
