@@ -163,6 +163,8 @@ func reactionEventIsForRun(event ReactionAddedRemovedEvent, run *Run) bool {
 func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
+  // TODO: Validate that the event comes from Slack.
+
   eventPayload, err := ioutil.ReadAll(req.Body)
   if err != nil {
     log.Printf("[ERROR] Couldn't read event body, err=%v", err)
