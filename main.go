@@ -145,11 +145,14 @@ type ReactionAddedRemovedEvent struct {
 }
 
 type OuterReactionEvent struct {
+  // Ignored: type (handled in GenericEvent)
   Token string
   // Ignored team_id
   // Ignored api_app_id
   Event ReactionAddedRemovedEvent
   // Ignored authed_users
+  // Ignored authorizations
+  // Ignored event_context
   // Ignored event_id
   // Ignored event_time
 }
@@ -360,6 +363,37 @@ func GetTodayOrOverride(req *http.Request) Date {
   return *todayPtr
 }
 
+func countPositiveAnswers(run *Run) int {
+
+  // We build the user -> no-reactji map to count people
+  // once and ignore 'no' when tallying.
+  // This means that any 'no' reactji wins in the map.
+  userReactjiMap := map[string] string{}
+  for _, reaction := range run.Reactions {
+    // If this is a no, count it as-is.
+    if reaction.Reaction == "no" {
+      userReactjiMap[reaction.User] = reaction.Reaction
+      continue
+    }
+
+    existingReactji := userReactjiMap[reaction.User]
+    if existingReactji == "no" {
+      continue;
+    }
+    userReactjiMap[reaction.User] = reaction.Reaction
+  }
+
+  count := 0
+  for _, reactji := range userReactjiMap {
+    if reactji == "no" {
+      continue;
+    }
+    count++
+  }
+
+  return count
+}
+
 func cronHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
   log.Printf("Headers: %+v", req.Header)
@@ -423,7 +457,9 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     // This is the day of HHH.
     // If we have 3 people, send the reminder.
     // If not, do nothing.
-    if (len(newestRun.Reactions) > 3) {
+    positiveCount := countPositiveAnswers(newestRun)
+    log.Printf("Positive count = %d", positiveCount)
+    if (positiveCount> 3) {
 	    messageInfo, err := postBlockMessageToChannel(string(hhhReminderMessagePayload))
 	    if err != nil {
 	      log.Printf("Couldn't post: %+v", err)
