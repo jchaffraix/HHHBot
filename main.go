@@ -166,6 +166,7 @@ func reactionEventIsForRun(event ReactionAddedRemovedEvent, run *Run) bool {
   if event.Item.Channel != run.PostedMessage.Channel || event.Item.Timestamp != run.PostedMessage.Timestamp {
     return false
   }
+
   return true
 }
 
@@ -180,6 +181,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
+  log.Printf("Event payload=%s", eventPayload)
 
   var genericEvent GenericEvent
   err = json.Unmarshal(eventPayload, &genericEvent)
@@ -219,8 +221,10 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
 
     event := outerEvent.Event
     if event.Type == "reaction_added" {
+      log.Printf("Received a `reaction_added` event")
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
+	log.Printf("Ignored the event as it was for a different message, event=%v", event)
         w.Write([]byte(""))
         return
       }
@@ -236,6 +240,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       w.Write([]byte(""))
       return
     } else if event.Type == "reaction_removed" {
+      log.Printf("Received a `reaction_removed` event")
       var event ReactionAddedRemovedEvent
       err = json.Unmarshal(eventPayload, &event)
       if err != nil {
@@ -253,6 +258,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
 
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
+	log.Printf("Ignored the event as it was for a different message, event=%v", event)
         w.Write([]byte(""))
         return
       }
@@ -356,6 +362,7 @@ func GetTodayOrOverride(req *http.Request) Date {
 
 func cronHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
+  log.Printf("Headers: %v", req.Header)
 
   // Check header: X-Appengine-Cron: true
 
@@ -372,6 +379,7 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     if err != nil {
       log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%v", err)
     }
+    w.Write([]byte("Rescheduled"))
     return
   }
 
