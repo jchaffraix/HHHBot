@@ -498,7 +498,7 @@ func UpsertRun(run *Run) error {
     return err
   }
   k := datastore.NameKey(RUN_TABLE, run.CreateDate, nil)
-  key, err := client.Put(ctx, k, &run)
+  key, err := client.Put(ctx, k, run)
   log.Printf("Key from put=%v", key)
   return err
 }
