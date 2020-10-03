@@ -303,6 +303,140 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
   log.Printf("[ERROR] Unhandled event type: %s", genericEvent.Type)
 }
 
+type userForInteractivity struct {
+  ID string
+  Username string
+  // Ignored team_id
+}
+
+type actionPayload struct {
+  // Ignored action_id
+  // Ignored block_id
+  // Ignored text
+  Value string
+  Type string
+  Timestamp string `json:"action_ts"`
+}
+
+type interactivePayload struct {
+  Type string
+  // Ignored team
+  User userForInteractivity
+  // Ignored api_app_id
+  Token string
+  // Ignored container
+  // Ignored trigger_id
+  // Ignored channel
+  // Ignored message
+  // Ignored response_url
+  Actions []actionPayload
+}
+
+func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
+  logRequest(req)
+
+  payloadStr, err := ioutil.ReadAll(req.Body)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't read request body, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  var payload interactivePayload
+  err = json.Unmarshal(payloadStr, &payload)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't parse interactivity payload %s, err=%+v", req.Body, err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  if payload.Type != "block_actions" {
+    log.Printf("Unknown type %s", payload.Type)
+    return
+  }
+
+  run, err := GetNewestRun()
+  if err != nil {
+    log.Printf("[ERROR] Couldn't get latest run err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  // If the run was cancelled already, nothing to do!
+  if run.ScheduleDate == "" {
+    log.Printf("Run was cancelled, bailing out...")
+    w.Write([]byte("Nothing to do"))
+    return
+  }
+
+  // If we are missing the current message, something is REALLY fishy.
+  if run.PostedMessage == nil {
+    log.Printf("[ERROR] Getting a callback without a postedmessage=%+v", run)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  user := payload.User
+  for _, action := range payload.Actions {
+    if action.Type != "button" {
+      log.Printf("Unknown action type %s", action.Type)
+      continue
+    }
+
+    if action.Value == "postpone" {
+      scheduleDate, err := parseDate(run.ScheduleDate)
+      if err != nil {
+	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+      postponedDate := scheduleDate.AddOneWeek().toString()
+      run.Postponements = append(run.Postponements, Event{user.ID, action.Timestamp})
+      run.ScheduleDate = postponedDate
+      err = UpsertRun(run)
+      if err != nil {
+	log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+      _, err = postReplyTo(run.PostedMessage, fmt.Sprintf(skipBlockMessage, user.Username, postponedDate))
+      if err != nil {
+	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+      w.Write([]byte("OK"))
+      return
+    } else if action.Value == "skip" {
+      // This should not happen. If it does, we keep going
+      // as know the scheduled date was not cleared.
+      if run.Cancellation != nil {
+	log.Printf("[ERROR] About to overwrite existing cancellation info run=%+v", run)
+      }
+
+      run.Cancellation = &Event{user.ID, action.Timestamp}
+      run.ScheduleDate = ""
+      err = UpsertRun(run)
+      if err != nil {
+	log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+      _, err = postReplyTo(run.PostedMessage, fmt.Sprintf(cancelBlockMessage, user.Username))
+      if err != nil {
+	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+      w.Write([]byte("OK"))
+      return
+    } else {
+      // Log and ignore other values.
+      log.Printf("Unknown value %s", action.Value)
+    }
+  }
+}
+
 func newestRunHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
@@ -548,7 +682,8 @@ const RUN_TABLE string = "Runs"
 
 type Event struct {
   User string `json:"user", datastore:",noindex"`
-  TimestampSec string `json:"timestamp_sec", datastore:",noindex"`
+  // Slack Timestamp for the event.
+  Timestamp string `json:"timestamp", datastore:",noindex"`
 }
 
 type Reaction struct {
@@ -699,7 +834,7 @@ const firstMessagePayload string = `[
           "text": "Postpone by one week",
           "emoji": true
         },
-        "value": "skip"
+        "value": "postpone"
       }
     ]
   }
@@ -732,6 +867,27 @@ const hhhReminderMessagePayload string = `[
   }
 ]`
 
+// Expects the name of the person skipping (string) and the postponed date (string).
+const skipBlockMessage string = `[
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "%s postponed HHH by one week to %s"
+    }
+  }
+]`
+
+const cancelBlockMessage string = `[
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "HHH was cancelled for this month by %s :scream_cat:"
+    }
+  }
+]`
+
 const testPayload string = `[
   {
     "type": "section",
@@ -754,6 +910,43 @@ type postMessageReply struct {
   Error string
   Channel string `json:"channel"`
   Timestamp string `json:"ts"`
+}
+
+func postReplyTo(msg *MessageInfo, payload string) (*MessageInfo, error) {
+  botToken, err := getBotToken()
+  if err != nil {
+    return nil, err
+  }
+
+  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"thread_ts\": %s, \"blocks\": %s }", msg.Channel, msg.Timestamp, payload)
+  log.Printf("Payload to be send: %s", fullPayload)
+  bodyReader := strings.NewReader(fullPayload)
+  req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bodyReader)
+  req.Header.Add("Content-Type", "application/json; charset=utf-8")
+  req.Header.Add("Authorization", "Bearer " + botToken)
+
+  defaultClient := &http.Client{}
+  resp, err := defaultClient.Do(req)
+  if err != nil {
+    return nil, err
+  }
+  defer resp.Body.Close()
+  body, err := ioutil.ReadAll(resp.Body)
+  if err != nil {
+    return nil, err
+  }
+  log.Printf("Response: %s", body)
+  var parsedReply postMessageReply
+  err = json.Unmarshal(body, &parsedReply)
+  if err != nil {
+    return nil, err
+  }
+
+  if !parsedReply.Ok {
+    return nil, errors.New("Failed call to `chat.postMessage`, error=" + parsedReply.Error)
+  }
+
+  return &MessageInfo{parsedReply.Channel, parsedReply.Timestamp}, nil
 }
 
 func postBlockMessageToChannel(payload string) (*MessageInfo, error) {
@@ -801,6 +994,7 @@ func main() {
   http.HandleFunc("/", mainPageHandler)
   http.HandleFunc("/newestRun", newestRunHandler)
   http.HandleFunc("/slack/events", slackEventsHandler)
+  http.HandleFunc("/slack/interactivity", slackInteractivityHandler)
   http.HandleFunc("/scheduleRun", scheduleRunHandler)
   http.HandleFunc("/cron", cronHandler)
   http.HandleFunc("/testMessage", testMessageHandler)
