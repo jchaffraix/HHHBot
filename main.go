@@ -39,10 +39,18 @@ func (d Date) After(other Date) bool {
 }
 
 func (d Date) AddOneWeek() Date {
+  return d.AddDays(7)
+}
+
+func (d Date) AddOneDay() Date {
+  return d.AddDays(1)
+}
+
+func (d Date) AddDays(days int) Date {
   today := time.Now()
   location := today.UTC().Location()
   date := time.Date(d.Year, time.Month(d.Month), d.Day, /*hour=*/9, /*min=*/0, /*sec=*/0, /*nsec=*/0, location)
-  date = date.AddDate(/*years=*/0, /*months=*/0, /*days=*/7)
+  date = date.AddDate(/*years=*/0, /*months=*/0, /*days=*/days)
   return convertToDate(date)
 }
 
@@ -91,6 +99,11 @@ func convertToDate(date time.Time) Date {
     int(date.Month()),
     date.Day(),
   }
+}
+
+func (d Date) toTime() time.Time {
+  location := time.Now().Location()
+  return time.Date(d.Year, time.Month(d.Month), /*day=*/d.Day, /*hour=*/9, /*min=*/0, /*sec=*/0, /*nsec=*/0, location)
 }
 
 // Information about the parsed message.
@@ -335,17 +348,26 @@ type interactivePayload struct {
 func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
-  payloadStr, err := ioutil.ReadAll(req.Body)
+  reqBody, err := ioutil.ReadAll(req.Body)
   if err != nil {
     log.Printf("[ERROR] Couldn't read request body, err=%+v", err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
+  // The payload is URL encoded and starts with "payload="
+  // so we decode it and remove the prefix.
+  payloadStr, err := url.QueryUnescape(string(reqBody))
+  if err != nil {
+    log.Printf("[ERROR] Couldn't url decode the request body, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+  payloadStr = payloadStr[len("payload="):]
 
   var payload interactivePayload
-  err = json.Unmarshal(payloadStr, &payload)
+  err = json.Unmarshal([]byte(payloadStr), &payload)
   if err != nil {
-    log.Printf("[ERROR] Couldn't parse interactivity payload %s, err=%+v", req.Body, err)
+    log.Printf("[ERROR] Couldn't parse interactivity payload %s, err=%+v", payloadStr, err)
     http.Error(w, "Internal Error", http.StatusInternalServerError)
     return
   }
@@ -368,6 +390,12 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
     w.Write([]byte("Nothing to do"))
     return
   }
+  scheduleDate, err := parseDate(run.ScheduleDate)
+  if err != nil {
+    log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
 
   // If we are missing the current message, something is REALLY fishy.
   if run.PostedMessage == nil {
@@ -384,12 +412,6 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
     }
 
     if action.Value == "postpone" {
-      scheduleDate, err := parseDate(run.ScheduleDate)
-      if err != nil {
-	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
-      }
       postponedDate := scheduleDate.AddOneWeek().toString()
       run.Postponements = append(run.Postponements, Event{user.ID, action.Timestamp})
       run.ScheduleDate = postponedDate
@@ -405,6 +427,7 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
 	http.Error(w, "Internal Error", http.StatusInternalServerError)
 	return
       }
+
       w.Write([]byte("OK"))
       return
     } else if action.Value == "skip" {
@@ -428,6 +451,15 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
 	http.Error(w, "Internal Error", http.StatusInternalServerError)
 	return
       }
+
+      // Schedule the next one.
+      err = ScheduleRunAt(getNextScheduledMessageTimeAfter(scheduleDate.AddOneDay().toTime()))
+      if err != nil {
+	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+	http.Error(w, "Internal Error", http.StatusInternalServerError)
+	return
+      }
+
       w.Write([]byte("OK"))
       return
     } else {
@@ -621,6 +653,14 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     }
 
     // Schedule the new run.
+    err = ScheduleRunAt(getNextScheduledMessageTimeAfter(today.toTime()))
+    if err != nil {
+      log.Printf("Couldn't set the new run: %+v", err)
+      // We still return a 200 OK to prevent retries.
+      w.Write([]byte("Failed run update"))
+      return
+    }
+
   }
 
   w.Write([]byte("OK"))
@@ -658,20 +698,21 @@ func getSecondThursdayForYearAndMonth(year int, month time.Month, pst *time.Loca
 }
 
 func getNextScheduledMessageTime() Date {
-  today := time.Now()
-  location := today.UTC().Location()
+  return getNextScheduledMessageTimeAfter(time.Now())
+}
+
+func getNextScheduledMessageTimeAfter(t time.Time) Date {
+  location := t.UTC().Location()
   // Check this month for the next date.
   // If it is passed, we look for the scheduled time next month.
-  secondThursdayOfThisMonth := getSecondThursdayForYearAndMonth(today.Year(), today.Month(), location)
-  if (secondThursdayOfThisMonth.After(today)) {
+  secondThursdayOfThisMonth := getSecondThursdayForYearAndMonth(t.Year(), t.Month(), location)
+  if (secondThursdayOfThisMonth.After(t)) {
     return convertToDate(secondThursdayOfThisMonth)
   }
 
   // This call correctly handles December as Date wraps the month into the new year.
-  return convertToDate(getSecondThursdayForYearAndMonth(today.Year(), today.Month() + 1, location))
+  return convertToDate(getSecondThursdayForYearAndMonth(t.Year(), t.Month() + 1, location))
 }
-
-
 
 // **************
 // DB management.
@@ -745,11 +786,16 @@ func UpsertRun(run *Run) error {
 }
 
 func ScheduleRun() error {
+  return ScheduleRunAt(getNextScheduledMessageTime())
+}
+
+func ScheduleRunAt(date Date) error {
   // TODO: Figure out how to make string conversion work for Date.
-  date := getNextScheduledMessageTime().toString()
+  dateStr := date.toString()
   run := Run{
-    date,
-    date,
+    // TODO: Just store the date directly instead doing constant conversion!
+    dateStr,
+    dateStr,
     /*PostedMessage=*/nil,
     []Reaction{},
     []Event{},
@@ -918,7 +964,7 @@ func postReplyTo(msg *MessageInfo, payload string) (*MessageInfo, error) {
     return nil, err
   }
 
-  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"thread_ts\": %s, \"blocks\": %s }", msg.Channel, msg.Timestamp, payload)
+  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"thread_ts\": \"%s\", \"blocks\": %s }", msg.Channel, msg.Timestamp, payload)
   log.Printf("Payload to be send: %s", fullPayload)
   bodyReader := strings.NewReader(fullPayload)
   req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bodyReader)
