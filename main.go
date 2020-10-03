@@ -37,6 +37,14 @@ func (d Date) After(other Date) bool {
   return d.Year > other.Year || d.Month > other.Month || d.Day > other.Day
 }
 
+func (d Date) AddOneWeek() Date {
+  today := time.Now()
+  location := today.UTC().Location()
+  date := time.Date(d.Year, time.Month(d.Month), d.Day, /*hour=*/9, /*min=*/0, /*sec=*/0, /*nsec=*/0, location)
+  date.AddDate(/*years=*/0, /*months=*/0, /*days=*/7)
+  return convertToDate(date)
+}
+
 func (d Date) toString() string {
   // We use 0 padded RFC3339 representation of the date as our primary
   // key. This works as the lexicographic order follows the calendar's.
@@ -196,7 +204,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
     var outerEvent OuterReactionEvent
     err = json.Unmarshal(eventPayload, &outerEvent)
     if err != nil {
-      log.Printf("[ERROR] Couldn't parse verification event, err=%v", err)
+      log.Printf("[ERROR] Couldn't parse event_callback event, err=%v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
@@ -314,17 +322,7 @@ func newestRunHandler(w http.ResponseWriter, req *http.Request) {
 func scheduleRunHandler(w http.ResponseWriter, req *http.Request) {
   logRequest(req)
 
-  // TODO: Figure out how to make string conversion work for Date.
-  date := getNextScheduledMessageTime().toString()
-  run := Run{
-    date,
-    date,
-    /*PostedMessage=*/nil,
-    []Reaction{},
-    []Event{},
-    /*Cancellation=*/nil,
-  }
-  err := UpsertRun(&run)
+  err := ScheduleRun()
   if err != nil {
     log.Printf("[ERROR] Failed to upsert new run, err=%v", err)
     w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -348,6 +346,15 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     return
   }
 
+  if newestRun == nil {
+    // If we are missing the next run, just schedule it manually.
+    err = ScheduleRun()
+    if err != nil {
+      log.Printf("[ERROR] Failed scheduling missing run, nothing is scheduled!!! err=%v", err)
+      return
+    }
+  }
+
   scheduleDate, err := parseDate(newestRun.ScheduleDate)
   if err != nil {
     log.Printf("[ERROR] Failed to parse the date of the newest run=%v, err=%v", newestRun, err)
@@ -366,14 +373,18 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
 
   if newestRun.PostedMessage == nil {
     // Send the original message.
-    messageInfo, err := postBlockMessageToChannel(string(messagePayload))
+    messageInfo, err := postBlockMessageToChannel(string(firstMessagePayload))
     if err != nil {
       log.Printf("Couldn't post: %v", err)
       http.Error(w, "Internal Error", http.StatusInternalServerError)
       return
     }
 
+    // Update the next run.
+    // We send the final reminder in an extra week.
+    // We also keep the posted message so we can get notified of the reactji to it.
     newestRun.PostedMessage = messageInfo
+    newestRun.ScheduleDate = today.AddOneWeek().toString()
     err = UpsertRun(newestRun)
     if err != nil {
       log.Printf("Couldn't update the messageInfo in the DB: %v", err)
@@ -382,7 +393,29 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     }
   } else {
     // This is the day of HHH.
-    // TODO: Send a reminder about it if it is not cancelled.
+    // If we have 3 people, send the reminder.
+    // If not, do nothing.
+    if (len(newestRun.Reactions) > 3) {
+	    messageInfo, err := postBlockMessageToChannel(string(hhhReminderMessagePayload))
+	    if err != nil {
+	      log.Printf("Couldn't post: %v", err)
+	      // We still return a 200 OK to prevent retries.
+	      w.Write([]byte("Failed posting"))
+	      return
+	    }
+	    log.Printf("New message: %v", messageInfo)
+    }
+    // Clear the next run date.
+    newestRun.ScheduleDate = ""
+    err = UpsertRun(newestRun)
+    if err != nil {
+      log.Printf("Couldn't update the run: %v", err)
+      // We still return a 200 OK to prevent retries.
+      w.Write([]byte("Failed run update"))
+      return
+    }
+
+    // Schedule the new run.
   }
 
   w.Write([]byte("OK"))
@@ -505,6 +538,20 @@ func UpsertRun(run *Run) error {
   return err
 }
 
+func ScheduleRun() error {
+  // TODO: Figure out how to make string conversion work for Date.
+  date := getNextScheduledMessageTime().toString()
+  run := Run{
+    date,
+    date,
+    /*PostedMessage=*/nil,
+    []Reaction{},
+    []Event{},
+    /*Cancellation=*/nil,
+  }
+  return UpsertRun(&run)
+}
+
 // TODO: Remove this and use the DB to store the token.
 // ***************
 // Secret handling
@@ -539,7 +586,7 @@ func getBotToken() (string, error) {
 // Slack messaging
 // ***************
 
-const messagePayload string = `[
+const firstMessagePayload string = `[
   {
     "type": "section",
     "text": {
@@ -570,6 +617,33 @@ const messagePayload string = `[
         "value": "skip"
       }
     ]
+  },
+  {
+    "type": "actions",
+    "elements": [
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Postpone by one week",
+          "emoji": true
+        },
+        "value": "skip"
+      }
+    ]
+  }
+]`
+
+const hhhReminderMessagePayload string = `[
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "@channel *HHH is today* :party-parrot:"
+    }
+  },
+  {
+    "type": "divider",
   },
   {
     "type": "actions",
