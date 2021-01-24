@@ -16,9 +16,6 @@ import (
 
   // DB.
   "cloud.google.com/go/datastore"
-
-  secretmanager "cloud.google.com/go/secretmanager/apiv1"
-  secretmanagerpb "google.golang.org/genproto/googleapis/cloud/secretmanager/v1"
 )
 
 // A lightweight Date.
@@ -804,10 +801,32 @@ func ScheduleRunAt(date Date) error {
   return UpsertRun(&run)
 }
 
-// TODO: Remove this and use the DB to store the token.
 // ***************
-// Secret handling
+// Settings handling
 // ***************
+
+const SETTINGS_TABLE string = "Settings"
+
+type Settings struct {
+  BotToken string `json:"bot_token", datastore:",noindex"`
+  ChannelId string `json:"channel_id", datastore:",noindex"`
+}
+
+func getSettings() (*Settings, error) {
+  ctx := context.Background()
+  client, err := datastore.NewClient(ctx, os.Getenv("PROJECT_ID"))
+  if err != nil {
+    return nil, err
+  }
+
+  settings := new(Settings)
+  k := datastore.NameKey(SETTINGS_TABLE, "singleton", nil)
+  if err := client.Get(ctx, k, settings); err != nil {
+    return nil, err
+  }
+
+  return settings, nil
+}
 
 func getBotToken() (string, error) {
   // For local testing.
@@ -816,23 +835,29 @@ func getBotToken() (string, error) {
     return localToken, nil
   }
 
-  ctx := context.Background()
-  client, err := secretmanager.NewClient(ctx)
+  settings, err := getSettings()
   if err != nil {
-          return "", err
+    return "", err
   }
 
-  req := &secretmanagerpb.AccessSecretVersionRequest{
-          Name: os.Getenv("BOT_TOKEN_SECRET"),
-  }
-  result, err := client.AccessSecretVersion(ctx, req)
-  if err != nil {
-          return "", err
-  }
-
-  // Some editors leave some trailing \n in the secret so trim them out.
-  return strings.TrimSpace(string(result.Payload.Data)), nil
+  return settings.BotToken, nil
 }
+
+func getChannelId() (string, error) {
+  // For local testing.
+  localChannelId := os.Getenv("CHANNEL_ID")
+  if localChannelId != "" {
+    return localChannelId, nil
+  }
+
+  settings, err := getSettings()
+  if err != nil {
+    return "", err
+  }
+
+  return settings.ChannelId, nil
+}
+
 
 // ***************
 // Slack messaging
@@ -1001,7 +1026,11 @@ func postBlockMessageToChannel(payload string) (*MessageInfo, error) {
     return nil, err
   }
 
-  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"blocks\": %s }", os.Getenv("CHANNEL_ID"), payload)
+  channelId, err := getChannelId()
+  if err != nil {
+    return nil, err
+  }
+  fullPayload := fmt.Sprintf("{\"channel\": \"%s\",\"blocks\": %s }", channelId, payload)
   log.Printf("Payload to be send: %s", fullPayload)
   bodyReader := strings.NewReader(fullPayload)
   req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bodyReader)

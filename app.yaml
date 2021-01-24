@@ -2,5 +2,3 @@ runtime: go112
 
 env_variables:
   PROJECT_ID: "hhhbot"
-  BOT_TOKEN_SECRET: "projects/789115521121/secrets/bot_token/versions/latest"
-  CHANNEL_ID: "CNK0PS648"
