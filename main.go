@@ -16,7 +16,12 @@ import (
 
   // DB.
   "cloud.google.com/go/datastore"
+
+  "github.com/google/uuid"
 )
+
+// App specific information
+const kClientId string = "767023877424.1358910598161"
 
 // A lightweight Date.
 // Unfortunately the time module doesn't define this
@@ -126,8 +131,46 @@ func mainPageHandler(w http.ResponseWriter, req *http.Request) {
       return
   }
 
-  // TODO: Check for login credentials.
+  // Prevent caching as we return different answers depending on the login state.
+  // TODO: This may be a bit crude as the admin page is always the same.
+  w.Header().Add("Cache-Control", "no-store")
+  loginCookie, err := req.Cookie(kLoginCookieName)
+  if err != nil {
+    // TODO: We should set a CSRF token.
+    http.ServeFile(w, req, "login.html")
+    return
+  }
 
+  loginInfo, err := getUser(loginCookie.Value)
+  if err != nil {
+    log.Printf("[ERROR] Error getting user, err=%+v", err)
+    http.ServeFile(w, req, "login.html")
+    return
+  }
+
+  log.Printf("[INFO] Got loginInfo=%+v for cookie.Value=%s", loginInfo, loginCookie.Value)
+  adminIds, err := getAdminIds()
+  if err != nil {
+    log.Printf("[ERROR] Error getting user, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  isAdmin := false
+  for _, id := range adminIds {
+    if id == loginInfo.UserID {
+      isAdmin = true
+      break
+    }
+  }
+
+  if !isAdmin {
+    log.Printf("[INFO] User tried to login but not admin, loginInfo=%+v", loginInfo)
+    http.Error(w, "Forbidden (contact your administrator)", http.StatusForbidden)
+    return
+  }
+
+  // TODO: Handle expiration.
   http.ServeFile(w, req, "index.html")
 }
 
@@ -237,7 +280,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
       log.Printf("Received a `reaction_added` event")
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
-	log.Printf("Ignored the event as it was for a different message, event=%+v", event)
+  log.Printf("Ignored the event as it was for a different message, event=%+v", event)
         w.Write([]byte(""))
         return
       }
@@ -271,7 +314,7 @@ func slackEventsHandler(w http.ResponseWriter, req *http.Request) {
 
       // Check that this corresponds to the message from our run.
       if !reactionEventIsForRun(event, newestRun) {
-	log.Printf("Ignored the event as it was for a different message, event=%+v", event)
+  log.Printf("Ignored the event as it was for a different message, event=%+v", event)
         w.Write([]byte(""))
         return
       }
@@ -414,15 +457,15 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
       run.ScheduleDate = postponedDate
       err = UpsertRun(run)
       if err != nil {
-	log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
+  log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
+  http.Error(w, "Internal Error", http.StatusInternalServerError)
+  return
       }
       _, err = postReplyTo(run.PostedMessage, fmt.Sprintf(skipBlockMessage, user.Username, postponedDate))
       if err != nil {
-	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
+  log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+  http.Error(w, "Internal Error", http.StatusInternalServerError)
+  return
       }
 
       w.Write([]byte("OK"))
@@ -431,30 +474,30 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
       // This should not happen. If it does, we keep going
       // as know the scheduled date was not cleared.
       if run.Cancellation != nil {
-	log.Printf("[ERROR] About to overwrite existing cancellation info run=%+v", run)
+  log.Printf("[ERROR] About to overwrite existing cancellation info run=%+v", run)
       }
 
       run.Cancellation = &Event{user.ID, action.Timestamp}
       run.ScheduleDate = ""
       err = UpsertRun(run)
       if err != nil {
-	log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
+  log.Printf("[ERROR] Failed to upsert the postponed run=%+v, err=%+v", run, err)
+  http.Error(w, "Internal Error", http.StatusInternalServerError)
+  return
       }
       _, err = postReplyTo(run.PostedMessage, fmt.Sprintf(cancelBlockMessage, user.Username))
       if err != nil {
-	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
+  log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+  http.Error(w, "Internal Error", http.StatusInternalServerError)
+  return
       }
 
       // Schedule the next one.
       err = ScheduleRunAt(getNextScheduledMessageTimeAfter(scheduleDate.AddOneDay().toTime()))
       if err != nil {
-	log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
-	http.Error(w, "Internal Error", http.StatusInternalServerError)
-	return
+  log.Printf("[ERROR] Failed to parse the date of the run=%+v, err=%+v", run, err)
+  http.Error(w, "Internal Error", http.StatusInternalServerError)
+  return
       }
 
       w.Write([]byte("OK"))
@@ -464,6 +507,94 @@ func slackInteractivityHandler(w http.ResponseWriter, req *http.Request) {
       log.Printf("Unknown value %s", action.Value)
     }
   }
+}
+
+const kLoginCookieName string = "LOGIN"
+
+type SlackOAuthUserResponse struct {
+  Id string
+  // TODO: This ignores scope, access_token, token_type.
+}
+
+type SlackOAuthTeamResponse struct {
+  Id string
+}
+
+type SlackOAuthResponse struct {
+  Ok bool
+  AuthedUser SlackOAuthUserResponse `json:"authed_user"`
+  Team SlackOAuthTeamResponse
+  // TODO: This ignores enterprise/enterprise installs.
+}
+
+func slackInstallHandler(w http.ResponseWriter, req *http.Request) {
+  logRequest(req)
+
+  // We receive the code.
+  m, err := url.ParseQuery(req.URL.RawQuery)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't parse query, err=%+v", err)
+    http.Error(w, "Couldn't parse query", http.StatusBadRequest)
+    return
+  }
+  codes, exist := m["code"]
+  if !exist {
+    http.Error(w, "URL query is missing a code", http.StatusBadRequest)
+    return
+  }
+
+  clientSecret, err := getClientSecret()
+  if err != nil {
+    log.Printf("[ERROR] Couldn't read event body, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  url := fmt.Sprintf("https://slack.com/api/oauth.v2.access?client_id=%s&client_secret=%s&code=%s", kClientId, clientSecret, codes[0])
+  log.Printf("[INFO] About call OAuth URL, url=%+v", url)
+  oauthReq, err := http.NewRequest("GET", url, /*bodyReader*/nil)
+
+  defaultClient := &http.Client{}
+  resp, err := defaultClient.Do(oauthReq)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't do the OAuth.v2.access call, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  defer resp.Body.Close()
+  body, err := ioutil.ReadAll(resp.Body)
+  if err != nil {
+    log.Printf("[ERROR] Couldn't read OAuth.v2.access body, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  log.Printf("OAuth Response: %s", body)
+  var oauthResp SlackOAuthResponse
+  err = json.Unmarshal(body, &oauthResp)
+  if err != nil {
+    http.Error(w, "Request doesn't match Slack's OAuth response", http.StatusBadRequest)
+    return
+  }
+
+  if !oauthResp.Ok {
+    log.Printf("[ERROR] Failed call to OAuth.v2.access, err=%+v", err)
+    http.Error(w, "Internal Error", http.StatusInternalServerError)
+    return
+  }
+
+  loginInfo := LoginInfo{
+    oauthResp.Team.Id,
+    oauthResp.AuthedUser.Id,
+  }
+  key, err := saveUser(loginInfo)
+  http.SetCookie(w, &http.Cookie{
+    Name: kLoginCookieName,
+    Value: key,
+    Path: "/",
+  })
+  http.Redirect(w, req, "/", 302)
 }
 
 func newestRunHandler(w http.ResponseWriter, req *http.Request) {
@@ -630,14 +761,14 @@ func cronHandler(w http.ResponseWriter, req *http.Request) {
     positiveCount := countPositiveAnswers(newestRun)
     log.Printf("Positive count = %d", positiveCount)
     if (positiveCount> 3) {
-	    messageInfo, err := postBlockMessageToChannel(string(hhhReminderMessagePayload))
-	    if err != nil {
-	      log.Printf("Couldn't post: %+v", err)
-	      // We still return a 200 OK to prevent retries.
-	      w.Write([]byte("Failed posting"))
-	      return
-	    }
-	    log.Printf("New message: %+v", messageInfo)
+      messageInfo, err := postBlockMessageToChannel(string(hhhReminderMessagePayload))
+      if err != nil {
+        log.Printf("Couldn't post: %+v", err)
+        // We still return a 200 OK to prevent retries.
+        w.Write([]byte("Failed posting"))
+        return
+      }
+      log.Printf("New message: %+v", messageInfo)
     }
     // Clear the next run date.
     newestRun.ScheduleDate = ""
@@ -808,8 +939,11 @@ func ScheduleRunAt(date Date) error {
 const SETTINGS_TABLE string = "Settings"
 
 type Settings struct {
+  ClientSecret string `json:"client_secret", datastore:",noindex"`
   BotToken string `json:"bot_token", datastore:",noindex"`
   ChannelId string `json:"channel_id", datastore:",noindex"`
+  // Comma separated list of admins.
+  AdminIds string `json:"admin_ids", datastore:",noindex"`
 }
 
 func getSettings() (*Settings, error) {
@@ -858,6 +992,96 @@ func getChannelId() (string, error) {
   return settings.ChannelId, nil
 }
 
+func getAdminIds() ([]string, error) {
+  // For local testing.
+  adminIds := os.Getenv("ADMIN_IDS")
+  if adminIds != "" {
+    return []string{adminIds}, nil
+  }
+
+  settings, err := getSettings()
+  if err != nil {
+    return []string{}, err
+  }
+
+  return strings.Split(settings.AdminIds, ","), nil
+}
+
+func getClientSecret() (string, error) {
+  // For local testing.
+  clientSecret := os.Getenv("CLIENT_SECRET")
+  if clientSecret != "" {
+    return clientSecret, nil
+  }
+
+  settings, err := getSettings()
+  if err != nil {
+    return "", err
+  }
+
+  return settings.ClientSecret, nil
+}
+
+
+// ****************
+// Login management
+// ****************
+
+const LOGIN_TABLE string = "Login"
+
+type LoginInfo struct {
+  TeamID string `json:"team_id",datastore:",noindex"`
+  UserID string `json:"user_id",datastore:",noindex"`
+}
+
+func saveUser(loginInfo LoginInfo) (string, error) {
+  ctx := context.Background()
+  client, err := datastore.NewClient(ctx, os.Getenv("PROJECT_ID"))
+  if err != nil {
+    return "", err
+  }
+
+  key_str := uuid.NewString();
+  k := datastore.NameKey(LOGIN_TABLE, key_str, nil)
+  if _, err := client.Put(ctx, k, &loginInfo); err != nil {
+    log.Printf("[ERROR] Failed storing user id, key_str=%s, err=%+v", key_str, err)
+    return "", err
+  }
+
+  log.Printf("[INFO] Saved user %+v to cookie key_str=%s", loginInfo, key_str)
+  return key_str, nil
+}
+
+func logout(key string) error {
+  ctx := context.Background()
+  client, err := datastore.NewClient(ctx, os.Getenv("PROJECT_ID"))
+  if err != nil {
+    return err
+  }
+
+  k := datastore.NameKey(LOGIN_TABLE, key, nil)
+  if err := client.Delete(ctx, k); err != nil {
+    return err
+  }
+
+  return nil
+}
+
+func getUser(key string) (*LoginInfo, error) {
+  ctx := context.Background()
+  client, err := datastore.NewClient(ctx, os.Getenv("PROJECT_ID"))
+  if err != nil {
+    return nil, err
+  }
+
+  loginInfo := new(LoginInfo)
+  k := datastore.NameKey(LOGIN_TABLE, key, nil)
+  if err := client.Get(ctx, k, loginInfo); err != nil {
+    return nil, err
+  }
+
+  return loginInfo, nil
+}
 
 // ***************
 // Slack messaging
@@ -1070,6 +1294,7 @@ func main() {
   http.HandleFunc("/newestRun", newestRunHandler)
   http.HandleFunc("/slack/events", slackEventsHandler)
   http.HandleFunc("/slack/interactivity", slackInteractivityHandler)
+  http.HandleFunc("/slack/install", slackInstallHandler)
   http.HandleFunc("/scheduleRun", scheduleRunHandler)
   http.HandleFunc("/cron", cronHandler)
   http.HandleFunc("/testMessage", testMessageHandler)
