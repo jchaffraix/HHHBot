@@ -1,0 +1,7 @@
+indexes:
+
+- kind: Run
+  ancestor: no
+  properties:
+  - name: CreateDate
+    direction: desc
